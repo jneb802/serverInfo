@@ -4,8 +4,8 @@
 
   <PropertyGroup>
     <TargetFramework>net48</TargetFramework>
-    <RootNamespace>Template</RootNamespace>
-    <AssemblyName>Template</AssemblyName>
+    <RootNamespace>ServerInfo</RootNamespace>
+    <AssemblyName>ServerInfo</AssemblyName>
     <LangVersion>10</LangVersion>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
