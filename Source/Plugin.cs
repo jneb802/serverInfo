@@ -28,6 +28,7 @@ namespace ServerInfo
         private static ConfigEntry<string> ApiKey = null!;
         private static ConfigEntry<int> IntervalSeconds = null!;
 
+        private FileSystemWatcher? _configWatcher;
         private Coroutine? _heartbeatCoroutine;
         private bool _started;
 
@@ -46,26 +47,55 @@ namespace ServerInfo
         private void Update()
         {
             if (_started) return;
-            if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
-            if (string.IsNullOrEmpty(EndpointUrl.Value) || string.IsNullOrEmpty(ApiKey.Value)) return;
 
-            _started = true;
-            _heartbeatCoroutine = StartCoroutine(HeartbeatLoop());
-            Log.LogInfo("Heartbeat loop started");
+            try
+            {
+                var znet = ZNet.instance;
+                if (znet == null || !znet.IsServer()) return;
+                if (string.IsNullOrEmpty(EndpointUrl.Value) || string.IsNullOrEmpty(ApiKey.Value)) return;
+
+                _started = true;
+                _heartbeatCoroutine = StartCoroutine(HeartbeatLoop());
+                Log.LogInfo("Heartbeat loop started");
+            }
+            catch (Exception ex)
+            {
+                Log.LogError($"Failed to start heartbeat loop: {ex}");
+            }
         }
 
         private void OnApplicationQuit()
         {
-            if (_heartbeatCoroutine != null)
+            StopHeartbeat();
+            DisposeConfigWatcher();
+        }
+
+        private void OnDestroy()
+        {
+            StopHeartbeat();
+            DisposeConfigWatcher();
+        }
+
+        private void StopHeartbeat()
+        {
+            if (_heartbeatCoroutine == null) return;
+
+            try
             {
                 StopCoroutine(_heartbeatCoroutine);
+            }
+            catch (Exception ex)
+            {
+                Log.LogWarning($"Failed to stop heartbeat coroutine cleanly: {ex}");
+            }
+            finally
+            {
                 _heartbeatCoroutine = null;
             }
         }
 
         private static IEnumerator HeartbeatLoop()
         {
-            // Let ZNet fully initialize
             yield return new WaitForSeconds(5f);
 
             int consecutiveFailures = 0;
@@ -74,11 +104,18 @@ namespace ServerInfo
 
             while (true)
             {
-                if (ZNet.instance != null && ZNet.instance.IsServer())
+                bool success = false;
+
+                if (IsServerReady())
                 {
-                    string json = BuildPayload();
-                    bool success = false;
-                    yield return PostGameState(json, result => success = result);
+                    if (TryBuildPayload(out string json))
+                    {
+                        yield return PostGameState(json, result => success = result);
+                    }
+                    else
+                    {
+                        Log.LogWarning("Skipping heartbeat because server state is not ready");
+                    }
 
                     if (success)
                     {
@@ -94,55 +131,82 @@ namespace ServerInfo
 
                 float interval = consecutiveFailures >= backoffThreshold
                     ? backoffInterval
-                    : IntervalSeconds.Value;
+                    : Math.Max(5, IntervalSeconds.Value);
                 yield return new WaitForSeconds(interval);
             }
         }
 
-        private static string BuildPayload()
+        private static bool IsServerReady()
         {
-            // Collect players
-            var players = new List<string>();
-            var peers = ZNet.instance.GetPeers();
-            if (peers != null)
+            try
             {
-                foreach (var peer in peers)
+                var znet = ZNet.instance;
+                return znet != null && znet.IsServer();
+            }
+            catch (Exception ex)
+            {
+                Log.LogWarning($"Unable to read server state: {ex}");
+                return false;
+            }
+        }
+
+        private static bool TryBuildPayload(out string json)
+        {
+            json = "{}";
+
+            try
+            {
+                var znet = ZNet.instance;
+                var envMan = EnvMan.instance;
+                if (znet == null || envMan == null)
                 {
-                    if (peer.IsReady() && !string.IsNullOrEmpty(peer.m_playerName))
-                        players.Add(peer.m_playerName);
+                    Log.LogWarning("Cannot build heartbeat payload before ZNet and EnvMan are ready");
+                    return false;
                 }
+
+                var players = new List<string>();
+                var peers = znet.GetPeers();
+                if (peers != null)
+                {
+                    foreach (var peer in peers)
+                    {
+                        if (peer == null) continue;
+                        if (peer.IsReady() && !string.IsNullOrEmpty(peer.m_playerName))
+                            players.Add(peer.m_playerName);
+                    }
+                }
+
+                int day = envMan.GetDay(znet.GetTimeSeconds());
+                float fraction = envMan.GetDayFraction();
+                float totalHours = fraction * 24f;
+                int hour = (int)totalHours;
+                int minute = (int)((totalHours - hour) * 60f);
+                string gameTime = $"{hour:D2}:{minute:D2}";
+                bool isDay = EnvMan.IsDay();
+
+                var sb = new StringBuilder();
+                sb.Append("{\"players\":[");
+                for (int i = 0; i < players.Count; i++)
+                {
+                    if (i > 0) sb.Append(",");
+                    sb.Append("\"");
+                    sb.Append(EscapeJson(players[i]));
+                    sb.Append("\"");
+                }
+                sb.Append("],");
+                sb.Append($"\"day\":{day},");
+                sb.Append($"\"game_time\":\"{gameTime}\",");
+                sb.Append($"\"is_day\":{(isDay ? "true" : "false")}");
+                sb.Append("}");
+
+                json = sb.ToString();
+                return true;
             }
-
-            // Day number
-            int day = EnvMan.instance.GetDay(ZNet.instance.GetTimeSeconds());
-
-            // Game time HH:MM
-            float fraction = EnvMan.instance.GetDayFraction();
-            float totalHours = fraction * 24f;
-            int hour = (int)totalHours;
-            int minute = (int)((totalHours - hour) * 60f);
-            string gameTime = $"{hour:D2}:{minute:D2}";
-
-            // Day/night
-            bool isDay = EnvMan.IsDay();
-
-            // Build JSON manually (no Newtonsoft dependency)
-            var sb = new StringBuilder();
-            sb.Append("{\"players\":[");
-            for (int i = 0; i < players.Count; i++)
+            catch (Exception ex)
             {
-                if (i > 0) sb.Append(",");
-                sb.Append("\"");
-                sb.Append(EscapeJson(players[i]));
-                sb.Append("\"");
+                Log.LogError($"Failed to build heartbeat payload: {ex}");
+                return false;
             }
-            sb.Append("],");
-            sb.Append($"\"day\":{day},");
-            sb.Append($"\"game_time\":\"{gameTime}\",");
-            sb.Append($"\"is_day\":{(isDay ? "true" : "false")}");
-            sb.Append("}");
-
-            return sb.ToString();
         }
 
         private static string EscapeJson(string s)
@@ -152,29 +216,77 @@ namespace ServerInfo
 
         private static IEnumerator PostGameState(string json, Action<bool> onComplete)
         {
-            var request = new UnityWebRequest(EndpointUrl.Value, "POST");
-            request.uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(json));
-            request.downloadHandler = new DownloadHandlerBuffer();
-            request.SetRequestHeader("X-API-Key", ApiKey.Value);
-            request.SetRequestHeader("Content-Type", "application/json");
-            request.timeout = 10;
+            UnityWebRequest? request = null;
+            UnityWebRequestAsyncOperation? operation = null;
 
-            yield return request.SendWebRequest();
-
-            if (request.result == UnityWebRequest.Result.Success)
+            try
             {
-                onComplete(true);
+                if (string.IsNullOrEmpty(EndpointUrl.Value))
+                {
+                    Log.LogWarning("Skipping heartbeat because EndpointUrl is empty");
+                    onComplete(false);
+                    yield break;
+                }
+
+                request = new UnityWebRequest(EndpointUrl.Value, "POST")
+                {
+                    uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(json)),
+                    downloadHandler = new DownloadHandlerBuffer(),
+                    timeout = 10
+                };
+                request.SetRequestHeader("X-API-Key", ApiKey.Value ?? "");
+                request.SetRequestHeader("Content-Type", "application/json");
+                operation = request.SendWebRequest();
             }
-            else
+            catch (Exception ex)
             {
-                Log.LogWarning($"POST failed: {request.error}");
+                Log.LogError($"Failed to construct or send heartbeat request: {ex}");
                 onComplete(false);
+                DisposeRequest(request);
+                yield break;
             }
 
-            request.Dispose();
+            try
+            {
+                yield return operation;
+
+                try
+                {
+                    if (request.result == UnityWebRequest.Result.Success)
+                    {
+                        onComplete(true);
+                    }
+                    else
+                    {
+                        Log.LogWarning($"POST failed: {request.error}");
+                        onComplete(false);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.LogError($"Failed while processing heartbeat response: {ex}");
+                    onComplete(false);
+                }
+            }
+            finally
+            {
+                DisposeRequest(request);
+            }
         }
 
-        // ── Config file watcher ──
+        private static void DisposeRequest(UnityWebRequest? request)
+        {
+            if (request == null) return;
+
+            try
+            {
+                request.Dispose();
+            }
+            catch (Exception ex)
+            {
+                Log.LogWarning($"Failed to dispose heartbeat request: {ex}");
+            }
+        }
 
         private DateTime _lastReloadTime;
         private const long RELOAD_DELAY = 10000000; // One second
@@ -182,12 +294,45 @@ namespace ServerInfo
         private void SetupWatcher()
         {
             _lastReloadTime = DateTime.Now;
-            FileSystemWatcher watcher = new(BepInEx.Paths.ConfigPath, ConfigFileName);
-            watcher.Changed += ReadConfigValues;
-            watcher.Created += ReadConfigValues;
-            watcher.Renamed += ReadConfigValues;
-            watcher.IncludeSubdirectories = true;
-            watcher.EnableRaisingEvents = true;
+
+            try
+            {
+                DisposeConfigWatcher();
+
+                _configWatcher = new FileSystemWatcher(BepInEx.Paths.ConfigPath, ConfigFileName);
+                _configWatcher.Changed += ReadConfigValues;
+                _configWatcher.Created += ReadConfigValues;
+                _configWatcher.Renamed += ReadConfigValues;
+                _configWatcher.IncludeSubdirectories = true;
+                _configWatcher.EnableRaisingEvents = true;
+            }
+            catch (Exception ex)
+            {
+                Log.LogError($"Failed to create config watcher for {ConfigFileName}: {ex}");
+                DisposeConfigWatcher();
+            }
+        }
+
+        private void DisposeConfigWatcher()
+        {
+            if (_configWatcher == null) return;
+
+            try
+            {
+                _configWatcher.EnableRaisingEvents = false;
+                _configWatcher.Changed -= ReadConfigValues;
+                _configWatcher.Created -= ReadConfigValues;
+                _configWatcher.Renamed -= ReadConfigValues;
+                _configWatcher.Dispose();
+            }
+            catch (Exception ex)
+            {
+                Log.LogWarning($"Failed to dispose config watcher cleanly: {ex}");
+            }
+            finally
+            {
+                _configWatcher = null;
+            }
         }
 
         private void ReadConfigValues(object sender, FileSystemEventArgs e)
@@ -199,15 +344,13 @@ namespace ServerInfo
             try
             {
                 Config.Reload();
+                _lastReloadTime = now;
                 Log.LogInfo("Configuration reloaded");
             }
-            catch
+            catch (Exception ex)
             {
-                Log.LogError($"Failed to reload {ConfigFileName}");
-                return;
+                Log.LogError($"Failed to reload {ConfigFileName}: {ex}");
             }
-
-            _lastReloadTime = now;
         }
     }
 }
