@@ -102,14 +102,23 @@ namespace ServerInfo
         private static string BuildPayload()
         {
             // Collect players
-            var players = new List<string>();
-            var peers = ZNet.instance.GetPeers();
+            List<string> players = new();
+            HashSet<string> seenPlayers = new(StringComparer.Ordinal);
+            List<ZNetPeer> peers = ZNet.instance.GetPeers();
             if (peers != null)
             {
-                foreach (var peer in peers)
+                foreach (ZNetPeer peer in peers)
                 {
-                    if (peer.IsReady() && !string.IsNullOrEmpty(peer.m_playerName))
-                        players.Add(peer.m_playerName);
+                    string playerName = peer.m_playerName?.Trim() ?? "";
+                    if (playerName.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    if (seenPlayers.Add(playerName))
+                    {
+                        players.Add(playerName);
+                    }
                 }
             }
 
