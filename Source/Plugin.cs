@@ -8,6 +8,7 @@ using BepInEx.Configuration;
 using BepInEx.Logging;
 using UnityEngine;
 using UnityEngine.Networking;
+using HarmonyLib;
 
 namespace ServerInfo
 {
@@ -30,6 +31,9 @@ namespace ServerInfo
 
         private Coroutine? _heartbeatCoroutine;
         private bool _started;
+        private PlayerDirectoryReporter? _directoryReporter;
+        internal static PlayerDirectoryReporter? DirectoryReporter;
+        private Harmony? _directoryHarmony;
 
         public void Awake()
         {
@@ -41,10 +45,25 @@ namespace ServerInfo
                 "Seconds between heartbeat POSTs");
 
             SetupWatcher();
+            _directoryReporter = new PlayerDirectoryReporter(Config, Log);
+            DirectoryReporter = _directoryReporter;
+            try
+            {
+                _directoryHarmony = new Harmony(ModGUID + ".player-directory");
+                _directoryHarmony.PatchAll(typeof(ServerInfoPlugin).Assembly);
+            }
+            catch (Exception exception)
+            {
+                _directoryHarmony?.UnpatchSelf();
+                _directoryReporter = null;
+                DirectoryReporter = null;
+                Log.LogWarning("Player directory hooks could not load: " + exception.GetType().Name);
+            }
         }
 
         private void Update()
         {
+            _directoryReporter?.Tick(this);
             if (_started) return;
             if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
             if (string.IsNullOrEmpty(EndpointUrl.Value) || string.IsNullOrEmpty(ApiKey.Value)) return;
@@ -56,11 +75,19 @@ namespace ServerInfo
 
         private void OnApplicationQuit()
         {
+            _directoryReporter?.SavePending();
             if (_heartbeatCoroutine != null)
             {
                 StopCoroutine(_heartbeatCoroutine);
                 _heartbeatCoroutine = null;
             }
+        }
+
+        private void OnDestroy()
+        {
+            _directoryReporter?.SavePending();
+            DirectoryReporter = null;
+            _directoryHarmony?.UnpatchSelf();
         }
 
         private static IEnumerator HeartbeatLoop()

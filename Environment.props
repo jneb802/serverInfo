@@ -94,6 +94,7 @@
 
     <!-- Valheim Game Assemblies (publicized) -->
     <ItemGroup>
+        <Reference Include="System.Runtime.Serialization" />
         <Reference Include="assembly_valheim">
             <HintPath>$(PUBLICIZED_PATH)/assembly_valheim_publicized.dll</HintPath>
             <Private>false</Private>
