@@ -3,6 +3,8 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Runtime.Serialization;
+using System.Runtime.Serialization.Json;
 using System.Text;
 using BepInEx;
 using BepInEx.Configuration;
@@ -189,7 +191,7 @@ namespace ServerInfo
                 ObservationBatch payload = new() { players = batch.ToArray() };
                 using UnityWebRequest request = new(_endpoint.Value, "POST")
                 {
-                    uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(JsonUtility.ToJson(payload))),
+                    uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(Serialize(payload))),
                     downloadHandler = new DownloadHandlerBuffer(),
                     timeout = 10
                 };
@@ -227,7 +229,7 @@ namespace ServerInfo
             if (!File.Exists(_pendingPath)) return;
             try
             {
-                SavedQueue? saved = JsonUtility.FromJson<SavedQueue>(File.ReadAllText(_pendingPath));
+                SavedQueue? saved = Deserialize<SavedQueue>(File.ReadAllText(_pendingPath));
                 if (saved == null || saved.players == null) throw new InvalidDataException();
                 _queueEndpoint = saved.endpoint;
                 if (!string.Equals(_queueEndpoint, _endpoint.Value, StringComparison.Ordinal))
@@ -258,7 +260,7 @@ namespace ServerInfo
                 Directory.CreateDirectory(Path.GetDirectoryName(_pendingPath)!);
                 SavedQueue saved = new() { endpoint = _queueEndpoint, players = new List<Observation>(_pending.Values).ToArray() };
                 string temporaryPath = _pendingPath + ".tmp";
-                File.WriteAllText(temporaryPath, JsonUtility.ToJson(saved));
+                File.WriteAllText(temporaryPath, Serialize(saved));
                 if (File.Exists(_pendingPath)) File.Replace(temporaryPath, _pendingPath, null);
                 else File.Move(temporaryPath, _pendingPath);
                 _dirty = false;
@@ -274,25 +276,45 @@ namespace ServerInfo
             }
         }
 
-        [Serializable]
+        private static string Serialize<T>(T value)
+        {
+            using MemoryStream stream = new();
+            new DataContractJsonSerializer(typeof(T)).WriteObject(stream, value);
+            return Encoding.UTF8.GetString(stream.ToArray());
+        }
+
+        private static T? Deserialize<T>(string value) where T : class
+        {
+            using MemoryStream stream = new(Encoding.UTF8.GetBytes(value));
+            return new DataContractJsonSerializer(typeof(T)).ReadObject(stream) as T;
+        }
+
+        [DataContract]
         internal sealed class Observation
         {
+            [DataMember]
             public string account_id = "";
+            [DataMember]
             public string character_name = "";
+            [DataMember]
             public string creator_id = "";
+            [DataMember]
             public string observed_at_utc = "";
         }
 
-        [Serializable]
+        [DataContract]
         private sealed class ObservationBatch
         {
+            [DataMember]
             public Observation[] players = Array.Empty<Observation>();
         }
 
-        [Serializable]
+        [DataContract]
         private sealed class SavedQueue
         {
+            [DataMember]
             public string endpoint = "";
+            [DataMember]
             public Observation[] players = Array.Empty<Observation>();
         }
     }

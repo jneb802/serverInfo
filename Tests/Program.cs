@@ -82,13 +82,17 @@ internal static class Program
 
     private static void RetryAfterRestart()
     {
-        ZNet.instance!.Peers.Add(new ZNetPeer());
+        const string name = "Viking \"Æ\"\\name\nTail";
+        ZNet.instance!.Peers.Add(new ZNetPeer { m_playerName = name });
         MonoBehaviour owner = new();
         UnityWebRequest.NextStatus = 503;
         new PlayerDirectoryReporter(Config(), new ManualLogSource()).Tick(owner);
         owner.Drain();
         Check(PendingCount() == 1, "Failure discarded an observation");
         string first = UnityWebRequest.Bodies[0];
+        using JsonDocument payload = JsonDocument.Parse(first);
+        Check(payload.RootElement.GetProperty("players")[0].GetProperty("character_name").GetString() == name,
+            "Serialization changed the character name");
         ZNet.instance.Peers.Clear();
         UnityWebRequest.NextStatus = 200;
         Time.realtimeSinceStartup = 10;

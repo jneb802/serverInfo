@@ -3,7 +3,6 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Text;
-using System.Text.Json;
 
 namespace BepInEx
 {
@@ -38,12 +37,6 @@ namespace BepInEx.Logging
 namespace UnityEngine
 {
     public static class Time { public static float realtimeSinceStartup; }
-    public static class JsonUtility
-    {
-        private static readonly JsonSerializerOptions Options = new() { IncludeFields = true };
-        public static string ToJson(object value) { return JsonSerializer.Serialize(value, Options); }
-        public static T? FromJson<T>(string value) { return JsonSerializer.Deserialize<T>(value, Options); }
-    }
     public sealed class Coroutine { }
     public sealed class MonoBehaviour
     {

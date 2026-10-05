@@ -86,10 +86,6 @@
             <HintPath>$(VALHEIM_MANAGED)/UnityEngine.UnityWebRequestModule.dll</HintPath>
             <Private>false</Private>
         </Reference>
-        <Reference Include="UnityEngine.JSONSerializeModule">
-            <HintPath>$(VALHEIM_MANAGED)/UnityEngine.JSONSerializeModule.dll</HintPath>
-            <Private>false</Private>
-        </Reference>
         <Reference Include="Unity.TextMeshPro">
             <HintPath>$(VALHEIM_MANAGED)/Unity.TextMeshPro.dll</HintPath>
             <Private>false</Private>
@@ -98,6 +94,7 @@
 
     <!-- Valheim Game Assemblies (publicized) -->
     <ItemGroup>
+        <Reference Include="System.Runtime.Serialization" />
         <Reference Include="assembly_valheim">
             <HintPath>$(PUBLICIZED_PATH)/assembly_valheim_publicized.dll</HintPath>
             <Private>false</Private>
