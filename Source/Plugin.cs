@@ -34,6 +34,7 @@ namespace ServerInfo
         private PlayerDirectoryReporter? _directoryReporter;
         internal static PlayerDirectoryReporter? DirectoryReporter;
         private Harmony? _directoryHarmony;
+        private CharacterRestoreCoordinator? _restoreCoordinator;
 
         public void Awake()
         {
@@ -45,6 +46,7 @@ namespace ServerInfo
                 "Seconds between heartbeat POSTs");
 
             SetupWatcher();
+            _restoreCoordinator = new CharacterRestoreCoordinator(Config, Log);
             _directoryReporter = new PlayerDirectoryReporter(Config, Log);
             DirectoryReporter = _directoryReporter;
             try
@@ -63,6 +65,7 @@ namespace ServerInfo
 
         private void Update()
         {
+            _restoreCoordinator?.Tick();
             _directoryReporter?.Tick(this);
             if (_started) return;
             if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
